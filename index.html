@@ -40,6 +40,13 @@ input[type=file]{display:none}
 .aviso.ok{background:#e9f6f0;border-color:#b6e0ce;color:#155f45;display:block}
 
 /* ---------- Filtros ---------- */
+.barraAtivos{position:sticky;top:0;z-index:50;background:#0f3557;color:#fff;padding:9px 26px;display:none;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;box-shadow:0 2px 6px rgba(0,0,0,.15)}
+.barraAtivos .rot{font-weight:bold;margin-right:4px}
+.chip{display:inline-flex;align-items:center;gap:6px;background:#fff;color:#0f3557;border-radius:14px;padding:3px 4px 3px 11px;font-weight:bold;font-size:12px}
+.chip button{border:0;background:#e3eaf0;color:#0f3557;width:20px;height:20px;border-radius:50%;cursor:pointer;font-size:13px;line-height:20px;padding:0}
+.chip button:hover{background:#c0392b;color:#fff}
+.btnLimpar{margin-left:auto;background:#c0392b;color:#fff;border:0;border-radius:6px;padding:7px 14px;font-weight:bold;font-size:12.5px;cursor:pointer}
+.btnLimpar:hover{background:#a5281c}
 .filtros{background:var(--branco);padding:14px 26px 18px;display:grid;grid-template-columns:repeat(7,1fr);gap:12px;border-bottom:1px solid var(--borda)}
 .campo label{display:block;font-size:11px;font-weight:bold;color:var(--suave);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
 .campo input,.campo select{width:100%;padding:9px 10px;border:1px solid #cfdae3;border-radius:8px;font-size:13px;font-family:inherit;background:#fff;color:var(--texto)}
@@ -154,6 +161,11 @@ tbody tr:hover{background:#eef6fb}
 
 <div class="aviso" id="aviso"></div>
 
+<div class="barraAtivos" id="barraAtivos">
+  <span class="rot">Filtros ativos:</span>
+  <span id="chipsAtivos" style="display:contents"></span>
+  <button class="btnLimpar" onclick="limparFiltros()">✕ Limpar todos os filtros</button>
+</div>
 <section class="filtros">
   <div class="campo"><label>Data inicial</label><input id="di" type="date"></div>
   <div class="campo"><label>Data final</label><input id="df" type="date"></div>
@@ -547,9 +559,47 @@ function aplicar(){
     fx.style.display='flex';
     $('faixaTexto').textContent = '⚠ Atenção: o painel está mostrando SÓ '+num(FILTRADO.length)+' lançamento(s) '+(soInvalidos?'com código fora do padrão':(soMarcados==='presilha'?'de presilha':'de berço'))+'. Os números abaixo não são o total do período.';
   } else fx.style.display='none';
+  atualizarAtivos();
   render();
 }
-function limparFiltros(){ codExato=false; soInvalidos=false; soMarcados=''; $('exPresilha').checked=false; $('exPalete').checked=false; $('incluirInvalidos').checked = false; iniciarFiltros(); }
+function periodoPadrao(){
+  const datas = BASE.map(r=>r.dt).filter(Boolean).sort((a,b)=>a-b);
+  return datas.length ? {di:iso(datas[0]), df:iso(datas[datas.length-1])} : {di:'',df:''};
+}
+const brData = v => v ? v.split('-').reverse().join('/') : '…';
+function tirarFiltro(q){
+  if(q==='periodo'){ const p=periodoPadrao(); $('di').value=p.di; $('df').value=p.df; mesSel=''; periodoAntes=null; }
+  else if(q==='mes'){ filtrarMes(mesSel); return; }
+  else if(q==='tipo') $('tipo').value='';
+  else if(q==='linha') $('linha').value='';
+  else if(q==='cod'){ $('cod').value=''; codExato=false; }
+  else if(q==='op') $('op').value='';
+  else if(q==='busca') $('busca').value='';
+  else if(q==='presilha') $('exPresilha').checked=false;
+  else if(q==='berco') $('exPalete').checked=false;
+  else if(q==='inval') $('incluirInvalidos').checked=false;
+  else if(q==='modo'){ soInvalidos=false; soMarcados=''; }
+  aplicar();
+}
+function atualizarAtivos(){
+  const c=[]; const add=(txt,q)=>c.push('<span class="chip">'+esc(txt)+'<button title="Remover este filtro" onclick="tirarFiltro(\''+q+'\')">✕</button></span>');
+  const p=periodoPadrao();
+  if(mesSel) add('Mês: '+mesRotulo(mesSel),'mes');
+  else if($('di').value!==p.di || $('df').value!==p.df) add('Período: '+brData($('di').value)+' a '+brData($('df').value),'periodo');
+  if($('tipo').value) add('Tipo: '+$('tipo').value,'tipo');
+  if($('linha').value) add('Linha: '+$('linha').value,'linha');
+  if($('cod').value.trim()){ const v=$('cod').value.trim(); add('Código: '+(codExato?rotCod(v,30):v),'cod'); }
+  if($('op').value.trim()) add('OP: '+$('op').value.trim(),'op');
+  if($('busca').value.trim()) add('Busca: '+$('busca').value.trim(),'busca');
+  if($('exPresilha').checked) add('Sem presilhas','presilha');
+  if($('exPalete').checked) add('Sem berços','berco');
+  if($('incluirInvalidos').checked) add('Incluindo códigos sem cadastro','inval');
+  if(soInvalidos) add('Só códigos sem cadastro','modo');
+  if(soMarcados) add('Só '+(soMarcados==='presilha'?'presilhas':'berços'),'modo');
+  $('chipsAtivos').innerHTML=c.join('');
+  $('barraAtivos').style.display = c.length ? 'flex' : 'none';
+}
+function limparFiltros(){ codExato=false; soInvalidos=false; soMarcados=''; mesSel=''; periodoAntes=null; $('exPresilha').checked=false; $('exPalete').checked=false; $('incluirInvalidos').checked = false; iniciarFiltros(); }
 
 /* ===================== AGREGAÇÕES ===================== */
 function contar(lista, chave){
