@@ -150,11 +150,16 @@ tbody tr:hover{background:#eef6fb}
     Base atual: <b id="nomeFonte">dados incorporados</b> &middot; <b id="qtdFonte">0</b> registros
     <span id="dataCarga"></span>
   </div>
+  <span id="statusOnline" style="font-size:12px;color:#63788a"></span>
+  <span class="soAdmin" style="display:none;gap:8px;align-items:center;flex-wrap:wrap">
   <label class="btn primario" for="arquivo">Carregar base atualizada</label>
   <input id="arquivo" type="file" accept=".csv,.xlsx,.xls">
   <label class="btn" for="arqCadastro">Carregar cadastro de produtos</label>
   <input id="arqCadastro" type="file" accept=".csv,.xlsx,.xls" style="display:none">
   <button class="btn" onclick="restaurarBase()">Restaurar base original</button>
+  <button class="btn" id="btnPublicar" onclick="publicarBase()" style="background:#1f7a5c;color:#fff;border-color:#1f7a5c">🚀 Publicar para todos</button>
+  </span>
+  <button class="btn sutil" id="btnAdmin" onclick="abrirAdmin()" title="Mostrar ou esconder os botões para atualizar a base">⚙ Atualizar base</button>
   <button class="btn" onclick="exportarCSV()">Exportar filtrado</button>
   <button class="btn sutil" onclick="window.print()">Imprimir A3</button>
 </section>
@@ -980,8 +985,81 @@ function exportarCSV(){
 
 /* ===================== INÍCIO ===================== */
 window.addEventListener('error', e=>{ mostrarAviso('erro','Erro no dashboard: '+e.message); });
+
+/* ===================== PUBLICAÇÃO ONLINE (mesmo modelo do Dashboard 5S) =====================
+   A base fica guardada online (JSONBin). Quem abre o link vê sempre a última base publicada.
+   Só quem tem a senha vê os botões de carregar e publicar. */
+const API_KEY = '$2a$10$KNdROZHfjqd6AoL4WBeAN.daX384YekFBY7Af7iXNeRF3UBeOvkcC';
+const SENHA_ADMIN = '5s2026';
+let BIN_ID = '';   // preenchido depois da primeira publicação
+if(!BIN_ID) BIN_ID = localStorage.getItem('faltas_bin') || '';
+let adminOn = false;
+
+function abrirAdmin(){
+  adminOn = !adminOn;
+  document.querySelectorAll('.soAdmin').forEach(e=>e.style.display = adminOn ? 'inline-flex' : 'none');
+  $('btnAdmin').textContent = adminOn ? '✕ Fechar atualização' : '⚙ Atualizar base';
+}
+function fecharAdmin(){ $('admOverlay').style.display='none'; }
+function conferirAdmin(){
+  if($('admSenha').value===SENHA_ADMIN){
+    adminOn=true; fecharAdmin();
+    document.querySelectorAll('.soAdmin').forEach(e=>e.style.display='inline-flex');
+    $('btnAdmin').textContent='🔓';
+  } else $('admErro').textContent='Senha incorreta.';
+}
+/* compacta a base para caber no armazenamento online */
+const b64 = buf => { let s=''; const a=new Uint8Array(buf); for(let i=0;i<a.length;i+=0x8000) s+=String.fromCharCode.apply(null,a.subarray(i,i+0x8000)); return btoa(s); };
+const unb64 = t => Uint8Array.from(atob(t), c=>c.charCodeAt(0));
+async function comprimir(txt){ const st=new Blob([txt]).stream().pipeThrough(new CompressionStream('gzip')); return b64(await new Response(st).arrayBuffer()); }
+async function descomprimir(z){ const st=new Blob([unb64(z)]).stream().pipeThrough(new DecompressionStream('gzip')); return await new Response(st).text(); }
+const dataTexto = d => d ? iso(d)+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0') : '';
+
+async function publicarBase(){
+  if(!BASE.length){ mostrarAviso('erro','Não há base carregada para publicar.'); return; }
+  const linhas = BASE.map(r=>[dataTexto(r.dt)||r.d, r.op, r.c, r.q, r.t, r.l, r.o, r.s]);
+  const pacote = { v:1, nome:$('nomeFonte').textContent, publicadoEm:new Date().toISOString(), n:linhas.length, z: await comprimir(JSON.stringify(linhas)) };
+  mostrarAviso('ok','Publicando '+num(linhas.length)+' registros...');
+  try{
+    let r;
+    if(!BIN_ID){
+      r = await fetch('https://api.jsonbin.io/v3/b',{method:'POST',headers:{'Content-Type':'application/json','X-Master-Key':API_KEY,'X-Bin-Name':'Inova-Faltas-Requisicoes','X-Bin-Private':'true'},body:JSON.stringify(pacote)});
+      if(!r.ok) throw new Error(await r.text());
+      BIN_ID = (await r.json()).metadata.id;
+      localStorage.setItem('faltas_bin',BIN_ID);
+      alert('✅ Base publicada!\n\nCódigo do armazenamento: '+BIN_ID+'\n\nEnvie este código para atualizar o arquivo do GitHub (só precisa fazer isso uma vez).');
+    } else {
+      r = await fetch('https://api.jsonbin.io/v3/b/'+BIN_ID,{method:'PUT',headers:{'Content-Type':'application/json','X-Master-Key':API_KEY},body:JSON.stringify(pacote)});
+      if(!r.ok) throw new Error(await r.text());
+    }
+    marcarOnline(pacote);
+    mostrarAviso('ok','✅ Publicado! Quem abrir o link já vê esta base.');
+  }catch(err){ mostrarAviso('erro','Erro ao publicar: '+err.message); }
+}
+function marcarOnline(p){
+  $('statusOnline').innerHTML = '🌐 base online publicada em <b>'+new Date(p.publicadoEm).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})+'</b>';
+}
+async function carregarOnline(){
+  if(!BIN_ID) return false;
+  try{
+    const r = await fetch('https://api.jsonbin.io/v3/b/'+BIN_ID+'/latest',{headers:{'X-Master-Key':API_KEY}});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const p = (await r.json()).record;
+    const linhas = JSON.parse(await descomprimir(p.z));
+    BASE = preparar(linhas.map(l=>({d:l[0],op:l[1],c:l[2],q:l[3],t:l[4],l:l[5],o:l[6],s:l[7]})));
+    $('nomeFonte').textContent = p.nome || 'base online';
+    marcarOnline(p);
+    iniciarFiltros();
+    return true;
+  }catch(err){
+    $('statusOnline').textContent='⚠ não foi possível buscar a base online — mostrando a base do arquivo';
+    return false;
+  }
+}
+
 BASE = preparar(BASE_ORIGINAL);
 iniciarFiltros();
+carregarOnline();
 </script>
 </body>
 </html>
