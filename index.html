@@ -165,11 +165,23 @@ tbody tr:hover{background:#eef6fb}
 </section>
 
 <section class="opcoes">
-  <label><input type="checkbox" id="incluirInvalidos"> Incluir códigos fora do padrão nos gráficos e indicadores</label>
+  <label><input type="checkbox" id="incluirInvalidos"> Incluir códigos que não existem no cadastro nos gráficos e indicadores</label>
   <span id="infoInvalidos"></span>
+</section>
+<section class="opcoes">
+  <b style="color:var(--texto)">Desconsiderar da análise:</b>
+  <label><input type="checkbox" id="exPresilha"> Presilhas</label>
+  <span id="infoPresilha"></span>
+  <label style="margin-left:14px"><input type="checkbox" id="exPalete"> Berços</label>
+  <input id="termosPalete" value="berço, berco, berços, bercos" title="Palavras procuradas na descrição do item e na observação. Separe por vírgula." style="width:170px;height:26px;padding:2px 8px;border:1px solid var(--borda);border-radius:6px;font-size:12px;accent-color:auto;cursor:text">
+  <span id="infoPalete"></span>
 </section>
 
 <main>
+  <div id="faixaModo" style="display:none;margin:0 0 14px;padding:12px 18px;border-radius:10px;background:#fff4d6;border:2px solid #e0a800;color:#5c4300;font-size:14px;font-weight:bold;align-items:center;justify-content:space-between;gap:12px">
+    <span id="faixaTexto"></span>
+    <button class="btn primario" onclick="sairModo()">Voltar a mostrar todos os lançamentos</button>
+  </div>
   <section class="cards c5">
     <div class="card"><small>Total de lançamentos</small><strong id="kTotal">0</strong><div class="sub" id="kTotalSub">&nbsp;</div></div>
     <div class="card falta"><small>Faltas</small><strong id="kFalta">0</strong><div class="sub" id="kFaltaSub">&nbsp;</div></div>
@@ -188,7 +200,7 @@ tbody tr:hover{background:#eef6fb}
   <section class="grid">
     <div class="painel largo">
       <h2>Total mensal de lançamentos</h2>
-      <p class="hint">Soma de todos os tipos lançados em cada mês.</p>
+      <p class="hint">Soma de todos os tipos lançados em cada mês. Clique em um mês para filtrar o painel inteiro por ele; clique de novo para voltar ao período anterior.</p>
       <div id="gTotalMes"></div>
     </div>
 
@@ -263,7 +275,7 @@ const corta = (t,n) => t.length>n ? t.slice(0,n-1)+'…' : t;
 const rotCod = (c,n) => { const x = descr(c); return x ? c+' · '+corta(x,n||28) : c+' · (sem cadastro)'; };
 
 /* ===================== ESTADO ===================== */
-let BASE = [], FILTRADO = [], ordem = {col:'dt', asc:false};
+let MESES_GRAF = null, BASE = [], FILTRADO = [], ordem = {col:'dt', asc:false};
 const CORES = {'Falta':'#c0392b','Requisição':'#e08e0b','Sobras':'#1f7a5c','Outros':'#7f8c9b'};
 const $ = id => document.getElementById(id);
 const num = n => Number(n||0).toLocaleString('pt-BR');
@@ -276,12 +288,18 @@ function paraData(txt){
   if(txt instanceof Date && !isNaN(txt)) return txt;
   const s = String(txt||'').trim();
   if(!s) return null;
-  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
-  if(m) return new Date(+m[3], +m[2]-1, +m[1], +(m[4]||0), +(m[5]||0), +(m[6]||0));
+  /* Padrão brasileiro: dia/mês/ano, com ano de 2 ou 4 dígitos (ex.: 1/10/26 14:54 = 1º de outubro). */
+  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})(?!\d)(?:[ ,T]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if(m){
+    const ano = m[3].length===2 ? 2000 + +m[3] : +m[3], mes = +m[2], dia = +m[1];
+    if(mes<1 || mes>12 || dia<1 || dia>31) return null;
+    return new Date(ano, mes-1, dia, +(m[4]||0), +(m[5]||0), +(m[6]||0));
+  }
   m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2}))?/);
   if(m) return new Date(+m[1], +m[2]-1, +m[3], +(m[4]||0), +(m[5]||0));
-  const d = new Date(s);
-  return isNaN(d) ? null : d;
+  /* Número serial do Excel (ex.: 46296,6) */
+  if(/^\d{5}(\.\d+)?$/.test(s)){ const n=+s; return new Date(Math.round((n-25569)*864e5) + new Date().getTimezoneOffset()*6e4); }
+  return null; /* não adivinha formatos: evita trocar dia e mês */
 }
 const iso = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 const mesChave = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
@@ -299,7 +317,8 @@ function diasUteis(ini, fim){
 
 /* Códigos válidos na base têm 4 ou 5 dígitos. Fora disso são erros de digitação
    (normalmente código e quantidade trocados no formulário). */
-const codigoValido = c => /^\d{4,5}$/.test(String(c==null?'':c).trim());
+/* Código válido = existe no cadastro de produtos (curva ABC), qualquer tamanho, ou tem 4/5 dígitos. */
+const codigoValido = c => { const k = String(c==null?'':c).trim(); return /^\d{4,5}$/.test(k) || !!(typeof CADASTRO!=='undefined' && CADASTRO[k]); };
 
 /* ===================== NORMALIZAÇÃO ===================== */
 function tipoPadrao(v){
@@ -310,6 +329,7 @@ function tipoPadrao(v){
   return String(v||'').replace(/\u00a0/g,' ').trim() || 'Outros';
 }
 function limpaNum(v){
+  if(typeof v === 'number') return Number.isFinite(v) ? v : null;
   const s = String(v==null?'':v).replace(/\u00a0/g,' ').trim().replace(/\./g,'').replace(',','.');
   if(!s) return null;
   const n = Number(s);
@@ -320,7 +340,7 @@ const limpaTxt = v => String(v==null?'':v).replace(/\u00a0/g,' ').trim().replace
 function preparar(lista){
   return lista.map(r=>{
     const d = paraData(r.d);
-    return {d:limpaTxt(r.d), dt:d, mes:d?mesChave(d):'', dia:d?d.getDay():null,
+    return {d:d ? d.toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'}) : limpaTxt(r.d), dt:d, mes:d?mesChave(d):'', dia:d?d.getDay():null,
             op:limpaTxt(r.op), c:limpaTxt(r.c), desc:descr(limpaTxt(r.c)), q:(r.q==null?null:Number(r.q)),
             t:tipoPadrao(r.t), l:limpaTxt(r.l), o:limpaTxt(r.o), s:limpaTxt(r.s)};
   }).filter(r=>r.dt || r.c || r.op);
@@ -400,9 +420,11 @@ $('arquivo').addEventListener('change', ev=>{
         brutos = lerCSV(txt);
       } else {
         if(typeof XLSX === 'undefined') throw new Error('Para abrir arquivos Excel é necessário acesso à internet. Salve a planilha como CSV e carregue novamente.');
-        const wb = XLSX.read(e.target.result,{type:'array',cellDates:true,raw:false});
+        const wb = XLSX.read(e.target.result,{type:'array',cellDates:true});
         const ws = wb.Sheets['Registro'] || wb.Sheets[wb.SheetNames[0]];
-        brutos = XLSX.utils.sheet_to_json(ws,{defval:'',raw:false});
+        /* raw:true = lê o valor real da célula (data como data, número como número),
+           e não o texto formatado, que trocava dia e mês. */
+        brutos = XLSX.utils.sheet_to_json(ws,{defval:'',raw:true});
       }
       aplicarBase(brutos, arq.name);
     }catch(err){
@@ -455,6 +477,7 @@ function restaurarBase(){
 
 /* ===================== FILTROS ===================== */
 function iniciarFiltros(){
+  soInvalidos=false; soMarcados=''; mesSel=''; periodoAntes=null;
   const datas = BASE.map(r=>r.dt).filter(Boolean).sort((a,b)=>a-b);
   $('di').value = datas.length ? iso(datas[0]) : '';
   $('df').value = datas.length ? iso(datas[datas.length-1]) : '';
@@ -468,23 +491,65 @@ function preencher(id, campo, rotulo){
   $(id).innerHTML = '<option value="">'+rotulo+'</option>' + vals.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join('');
 }
 ['di','df','tipo','linha','cod','op','busca'].forEach(id=>{
-  $(id).addEventListener(['cod','op','busca'].includes(id)?'input':'change', ()=>{ if(id==='cod') codExato=false; aplicar(); });
+  $(id).addEventListener(['cod','op','busca'].includes(id)?'input':'change', ()=>{ if(id==='cod') codExato=false; if(id==='di'||id==='df'){ mesSel=''; periodoAntes=null; } soInvalidos=false; soMarcados=''; aplicar(); });
 });
-$('incluirInvalidos').addEventListener('change', render);
+$('incluirInvalidos').addEventListener('change', ()=>{ soInvalidos=false; soMarcados=''; aplicar(); });
+let soInvalidos = false;
+function sairModo(){ soInvalidos=false; soMarcados=''; aplicar(); }
+function verInvalidos(){ soInvalidos = !soInvalidos; aplicar(); if(soInvalidos) document.querySelector('.tabelaBox').scrollIntoView({behavior:'smooth'}); }
+/* ===== Desconsiderar presilhas e paletes (os registros continuam na base) ===== */
+let soMarcados = '';
+const termosPalete = () => $('termosPalete').value.split(',').map(t=>semAcento(t.trim())).filter(Boolean);
+const ehPresilha = r => /presil/.test(semAcento(r.desc + ' ' + r.o));
+const ehPalete = r => { const txt = semAcento(r.desc + ' ' + r.o); return termosPalete().some(t => txt.includes(t)); };
+function verMarcados(qual){ soMarcados = (soMarcados===qual) ? '' : qual; aplicar(); if(soMarcados) document.querySelector('.tabelaBox').scrollIntoView({behavior:'smooth'}); }
+['exPresilha','exPalete'].forEach(id=>$(id).addEventListener('change', ()=>{ soMarcados=''; soInvalidos=false; aplicar(); }));
+$('termosPalete').addEventListener('input', ()=>{ soMarcados=''; aplicar(); });
+let mesSel = '', periodoAntes = null;
+function filtrarMes(k){
+  if(mesSel===k){ mesSel=''; if(periodoAntes){ $('di').value=periodoAntes.di; $('df').value=periodoAntes.df; } periodoAntes=null; }
+  else {
+    if(!mesSel) periodoAntes = {di:$('di').value, df:$('df').value};
+    mesSel = k; const [a,m] = k.split('-').map(Number);
+    $('di').value = k+'-01'; $('df').value = k+'-'+String(new Date(a,m,0).getDate()).padStart(2,'0');
+  }
+  soInvalidos=false; soMarcados=''; aplicar();
+}
 function aplicar(){
   const ini = $('di').value ? new Date($('di').value+'T00:00:00') : null;
   const fim = $('df').value ? new Date($('df').value+'T23:59:59') : null;
   const tipo = $('tipo').value, linha = $('linha').value;
   const cod = semAcento($('cod').value.trim()), op = semAcento($('op').value.trim()), q = semAcento($('busca').value.trim());
-  FILTRADO = BASE.filter(r=>
-    (!ini || !r.dt || r.dt >= ini) && (!fim || !r.dt || r.dt <= fim) &&
+  const passa = (r, ini, fim) =>
+    (!ini || (r.dt && r.dt >= ini)) && (!fim || (r.dt && r.dt <= fim)) &&
+    (!soInvalidos || (r.c && !codigoValido(r.c))) &&
     (!tipo || r.t === tipo) && (!linha || r.l === linha) &&
     (!cod || (codExato ? r.c===$('cod').value.trim() : semAcento(r.c+' '+r.desc).includes(cod))) && (!op || semAcento(r.op).includes(op)) &&
-    (!q || semAcento([r.op,r.c,r.desc,r.t,r.l,r.o,r.s].join(' ')).includes(q))
-  );
+    (!q || semAcento([r.op,r.c,r.desc,r.t,r.l,r.o,r.s].join(' ')).includes(q));
+  const desc = r => !($('exPresilha').checked && ehPresilha(r)) && !($('exPalete').checked && ehPalete(r));
+  FILTRADO = BASE.filter(r => passa(r, ini, fim));
+  if(mesSel && periodoAntes){
+    const i2 = periodoAntes.di ? new Date(periodoAntes.di+'T00:00:00') : null, f2 = periodoAntes.df ? new Date(periodoAntes.df+'T23:59:59') : null;
+    MESES_GRAF = BASE.filter(r => passa(r, i2, f2) && desc(r));
+  } else MESES_GRAF = null;
+  /* contagem no período/filtros atuais, antes de desconsiderar */
+  const nPres = FILTRADO.filter(ehPresilha).length, nPal = FILTRADO.filter(ehPalete).length;
+  if(soMarcados==='presilha') FILTRADO = FILTRADO.filter(ehPresilha);
+  else if(soMarcados==='palete') FILTRADO = FILTRADO.filter(ehPalete);
+  else FILTRADO = FILTRADO.filter(r => !($('exPresilha').checked && ehPresilha(r)) && !($('exPalete').checked && ehPalete(r)));
+  const info = (n, ch, qual) => soMarcados===qual
+      ? '<span class="alerta">Mostrando só os '+num(n)+' lançamento(s)</span> <a href="#" onclick="verMarcados(\''+qual+'\');return false">voltar a mostrar todos</a>'
+      : (n ? (ch ? '<span class="alerta">'+num(n)+' fora da análise</span>' : num(n)+' no filtro')+' · <a href="#" onclick="verMarcados(\''+qual+'\');return false">ver quais são</a>' : 'nenhum no filtro');
+  $('infoPresilha').innerHTML = info(nPres, $('exPresilha').checked, 'presilha');
+  $('infoPalete').innerHTML = info(nPal, $('exPalete').checked, 'palete');
+  const fx=$('faixaModo');
+  if(soInvalidos || soMarcados){
+    fx.style.display='flex';
+    $('faixaTexto').textContent = '⚠ Atenção: o painel está mostrando SÓ '+num(FILTRADO.length)+' lançamento(s) '+(soInvalidos?'com código fora do padrão':(soMarcados==='presilha'?'de presilha':'de berço'))+'. Os números abaixo não são o total do período.';
+  } else fx.style.display='none';
   render();
 }
-function limparFiltros(){ codExato=false; $('incluirInvalidos').checked = false; iniciarFiltros(); }
+function limparFiltros(){ codExato=false; soInvalidos=false; soMarcados=''; $('exPresilha').checked=false; $('exPalete').checked=false; $('incluirInvalidos').checked = false; iniciarFiltros(); }
 
 /* ===================== AGREGAÇÕES ===================== */
 function contar(lista, chave){
@@ -584,7 +649,8 @@ function barrasSimples(id, chaves, dados, rotulo, cor){
   for(let i=0;i<=4;i++){ const y=T+alt-(alt*i/4);
     g+='<line x1="'+L+'" y1="'+y+'" x2="'+(W-R)+'" y2="'+y+'" stroke="#eef3f7"/><text x="'+(L-8)+'" y="'+(y+4)+'" text-anchor="end" font-size="10" fill="#8a9aa8">'+num(Math.round(max*i/4))+'</text>'; }
   chaves.forEach((k,i)=>{ const v=dados[k]||0, h=alt*v/max, x=L+passo*i+(passo-larg)/2, y=T+alt-h;
-    g+='<rect class="barra" x="'+x+'" y="'+y+'" width="'+larg+'" height="'+h+'" rx="3" fill="'+cor+'"><title>'+esc(rotulo(k))+': '+num(v)+'</title></rect>'
+    const sel = (mesSel===k), apag = (mesSel && !sel);
+    g+='<rect class="barra clic" onclick="filtrarMes(\''+k+'\')" style="cursor:pointer" x="'+x+'" y="'+y+'" width="'+larg+'" height="'+h+'" rx="3" fill="'+(sel?'#c0392b':cor)+'" opacity="'+(apag?0.35:1)+'"><title>'+esc(rotulo(k))+': '+num(v)+' · clique para filtrar este mês</title></rect>'
      +'<text x="'+(x+larg/2)+'" y="'+(y-6)+'" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#43586a">'+num(v)+'</text>'
      +'<text x="'+(x+larg/2)+'" y="'+(H-10)+'" text-anchor="middle" font-size="10.5" fill="#63788a">'+esc(rotulo(k))+'</text>'; });
   g+='<line x1="'+L+'" y1="'+(T+alt)+'" x2="'+(W-R)+'" y2="'+(T+alt)+'" stroke="#cfdae3"/>';
@@ -779,7 +845,8 @@ function render(){
   $('kDiaSub').textContent = qtdDias ? 'todos os tipos · '+num(qtdDias)+' dias úteis no período' : 'sem datas no filtro';
 
   const meses = [...new Set(FILTRADO.filter(r=>r.mes).map(r=>r.mes))].sort();
-  barrasSimples('gTotalMes', meses, contar(FILTRADO.filter(r=>r.mes),'mes'), mesRotulo, '#0f3557');
+  { const fonte = MESES_GRAF || FILTRADO; const mm = [...new Set(fonte.filter(r=>r.mes).map(r=>r.mes))].sort();
+    barrasSimples('gTotalMes', mm, contar(fonte.filter(r=>r.mes),'mes'), mesRotulo, '#0f3557'); }
   tresGraficos('gEvolucao', meses, [
     {nome:'Falta', cor:CORES['Falta'], dados:contar(FILTRADO.filter(r=>r.t==='Falta'),'mes')},
     {nome:'Requisição', cor:CORES['Requisição'], dados:contar(FILTRADO.filter(r=>r.t==='Requisição'),'mes')},
@@ -803,9 +870,13 @@ function render(){
     : '';
   $('hintPareto').textContent = '20 códigos com mais lançamentos e o percentual acumulado. Clique em uma barra para filtrar o painel pelo código; clique de novo para desfazer.' + nota;
   $('hintQtd').textContent = '15 códigos com maior soma de quantidade solicitada. Clique em uma barra para filtrar pelo código.' + nota;
-  $('infoInvalidos').innerHTML = invalidos.length
-    ? '<span class="alerta">'+num(invalidos.length)+' registro(s) com código fora do padrão</span> códigos válidos têm 4 ou 5 dígitos; os demais costumam ser código e quantidade trocados no formulário'
-    : 'Nenhum código fora do padrão no filtro atual.';
+  const semData = BASE.filter(r=>!r.dt).length;
+  $('infoInvalidos').innerHTML = (soInvalidos
+      ? '<span class="alerta">Mostrando só os '+num(FILTRADO.length)+' registro(s) com código fora do padrão</span> <a href="#" onclick="verInvalidos();return false">voltar a mostrar todos</a>'
+      : (invalidos.length
+        ? '<span class="alerta">'+num(invalidos.length)+' registro(s) com código fora do padrão</span> <a href="#" onclick="verInvalidos();return false">ver quais são</a> · códigos que não existem no cadastro de produtos; costumam ser código e quantidade trocados no formulário'
+        : 'Nenhum código fora do padrão no filtro atual.'))
+    + (semData && ($('di').value || $('df').value) ? ' · <span class="alerta">'+num(semData)+' registro(s) da base sem data válida ficaram fora do filtro de período</span>' : '');
 
   const nomesDias=['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
   const porDia = contar(FILTRADO.filter(r=>r.dia!=null), r=>nomesDias[r.dia]);
@@ -848,8 +919,8 @@ function tabela(){
 /* ===================== EXPORTAÇÃO ===================== */
 function exportarCSV(){
   if(!FILTRADO.length){ mostrarAviso('erro','Não há registros filtrados para exportar.'); return; }
-  const cab=['Data','Ordem de Produção','Código','Descrição','Quantidade','Tipo','Linha','Observação','Status'];
-  const linhas=FILTRADO.map(r=>[r.d,r.op,r.c,r.desc,(r.q==null?'':String(r.q).replace('.',',')),r.t,r.l,r.o,r.s]);
+  const cab=['Data','Ordem de Produção','Código','Descrição','Quantidade','Tipo','Linha','Observação','Status','Presilha','Berço'];
+  const linhas=FILTRADO.map(r=>[r.d,r.op,r.c,r.desc,(r.q==null?'':String(r.q).replace('.',',')),r.t,r.l,r.o,r.s,ehPresilha(r)?'Sim':'Não',ehPalete(r)?'Sim':'Não']);
   const csv=[cab,...linhas].map(l=>l.map(v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"').join(';')).join('\n');
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'}));
