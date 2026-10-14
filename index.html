@@ -194,6 +194,11 @@ tbody tr:hover{background:#eef6fb}
   <span id="infoPalete"></span>
 </section>
 
+<div id="telaCarregando" style="display:none;position:fixed;inset:0;z-index:400;background:#f4f7fa;align-items:center;justify-content:center;flex-direction:column;gap:14px;font-family:inherit;color:#0f3557">
+  <div style="width:42px;height:42px;border:4px solid #d6e2ec;border-top-color:#0f3557;border-radius:50%;animation:girar .8s linear infinite"></div>
+  <div style="font-size:14px;font-weight:bold">Carregando a base mais recente...</div>
+</div>
+<style>@keyframes girar{to{transform:rotate(360deg)}}</style>
 <main>
   <div id="faixaModo" style="display:none;margin:0 0 14px;padding:12px 18px;border-radius:10px;background:#fff4d6;border:2px solid #e0a800;color:#5c4300;font-size:14px;font-weight:bold;align-items:center;justify-content:space-between;gap:12px">
     <span id="faixaTexto"></span>
@@ -223,7 +228,7 @@ tbody tr:hover{background:#eef6fb}
 
     <div class="painel largo">
       <h2>Evolução mensal por tipo</h2>
-      <p class="hint">Um gráfico para cada tipo, cada um na sua própria escala, para ver a tendência de cada tipo sem misturar. Clique em um tipo para filtrar o painel inteiro; clique de novo para voltar a todos.</p>
+      <p class="hint">Um gráfico para cada tipo, cada um na sua própria escala. Clique em uma barra para filtrar o painel por aquele mês e tipo; clique no título para filtrar só o tipo (todos os meses). Clique de novo para desfazer.</p>
       <div id="gEvolucao"></div>
       <div class="legenda clicavel" id="legEvolucao"></div>
     </div>
@@ -540,6 +545,12 @@ function verMarcados(qual){ soMarcados = (soMarcados===qual) ? '' : qual; aplica
 ['exPresilha','exPalete'].forEach(id=>$(id).addEventListener('change', ()=>{ soMarcados=''; soInvalidos=false; aplicar(); }));
 $('termosPalete').addEventListener('input', ()=>{ soMarcados=''; aplicar(); });
 let mesSel = '', periodoAntes = null;
+/* Barra dos gráficos por tipo: filtra o MÊS e o TIPO juntos. Clicar de novo desfaz os dois. */
+function filtrarMesTipo(k, t){
+  if(mesSel===k && $('tipo').value===t){ $('tipo').value=''; filtrarMes(k); return; }
+  $('tipo').value = t;
+  if(mesSel!==k) filtrarMes(k); else aplicar();
+}
 function filtrarMes(k){
   if(mesSel===k){ mesSel=''; if(periodoAntes){ $('di').value=periodoAntes.di; $('df').value=periodoAntes.df; } periodoAntes=null; }
   else {
@@ -743,7 +754,8 @@ function tresGraficos(id, chaves, series, rotulo){
     chaves.forEach((k,i)=>{
       const v=se.dados[k]||0, x=L+passo*i+(passo-larg)/2;
       if(v){ const h=alt*v/max, y=T+alt-h;
-        g+='<rect class="barra clic" onclick="filtrarTipo(\''+se.nome+'\')" x="'+x+'" y="'+y+'" width="'+larg+'" height="'+h+'" rx="2" fill="'+se.cor+'"><title>'+esc(rotulo(k))+' · '+esc(se.nome)+': '+num(v)+'</title></rect>'
+        const selB = (mesSel===k && $('tipo').value===se.nome), apB = (mesSel && mesSel!==k);
+        g+='<rect class="barra clic" onclick="filtrarMesTipo(\''+k+'\',\''+se.nome+'\')" x="'+x+'" y="'+y+'" width="'+larg+'" height="'+h+'" rx="2" fill="'+se.cor+'" opacity="'+(apB?0.3:1)+'"'+(selB?' stroke="#0f3557" stroke-width="2.5"':'')+'><title>'+esc(rotulo(k))+' · '+esc(se.nome)+' (clique para filtrar este mês e tipo): '+num(v)+'</title></rect>'
          +'<text x="'+(x+larg/2)+'" y="'+(y-4)+'" text-anchor="middle" font-size="8.5" fill="#43586a">'+num(v)+'</text>'; }
       g+='<text x="'+(x+larg/2)+'" y="'+(H-12)+'" text-anchor="end" font-size="8.5" fill="#63788a" transform="rotate(-45 '+(x+larg/2)+' '+(H-12)+')">'+esc(rotulo(k))+'</text>';
     });
@@ -919,11 +931,12 @@ function render(){
   const meses = [...new Set(FILTRADO.filter(r=>r.mes).map(r=>r.mes))].sort();
   { const fonte = MESES_GRAF || FILTRADO; const mm = [...new Set(fonte.filter(r=>r.mes).map(r=>r.mes))].sort();
     barrasSimples('gTotalMes', mm, contar(fonte.filter(r=>r.mes),'mes'), mesRotulo, '#0f3557'); }
-  tresGraficos('gEvolucao', meses, [
-    {nome:'Falta', cor:CORES['Falta'], dados:contar(FILTRADO.filter(r=>r.t==='Falta'),'mes')},
-    {nome:'Requisição', cor:CORES['Requisição'], dados:contar(FILTRADO.filter(r=>r.t==='Requisição'),'mes')},
-    {nome:'Sobras', cor:CORES['Sobras'], dados:contar(FILTRADO.filter(r=>r.t==='Sobras'),'mes')}
-  ], mesRotulo);
+  { const fonte = MESES_GRAF || FILTRADO; const mm = [...new Set(fonte.filter(r=>r.mes).map(r=>r.mes))].sort();
+  tresGraficos('gEvolucao', mm, [
+    {nome:'Falta', cor:CORES['Falta'], dados:contar(fonte.filter(r=>r.t==='Falta'),'mes')},
+    {nome:'Requisição', cor:CORES['Requisição'], dados:contar(fonte.filter(r=>r.t==='Requisição'),'mes')},
+    {nome:'Sobras', cor:CORES['Sobras'], dados:contar(fonte.filter(r=>r.t==='Sobras'),'mes')}
+  ], mesRotulo); }
   legendaTipos('legEvolucao', contar(FILTRADO,'t'));
 
   rosca('gTipo', ordenarDesc(tipos));
@@ -1056,6 +1069,7 @@ async function publicarBase(){
 function marcarOnline(p){
   $('statusOnline').innerHTML = '🌐 base online publicada em <b>'+new Date(p.publicadoEm).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})+'</b>';
 }
+
 async function carregarOnline(){
   if(!BIN_ID) return false;
   try{
@@ -1074,9 +1088,19 @@ async function carregarOnline(){
   }
 }
 
-BASE = preparar(BASE_ORIGINAL);
-iniciarFiltros();
-carregarOnline();
+/* Inicialização: se existe base online, espera ela chegar antes de desenhar o painel
+   (evita mostrar a base antiga do arquivo e "piscar" quando a nova chega). */
+(async ()=>{
+  if(BIN_ID){
+    $('telaCarregando').style.display='flex';
+    const limite = new Promise(res=>setTimeout(()=>res(false), 10000)); // no máximo 10 s
+    const ok = await Promise.race([carregarOnline(), limite]);
+    $('telaCarregando').style.display='none';
+    if(ok) return;
+  }
+  BASE = preparar(BASE_ORIGINAL);
+  iniciarFiltros();
+})();
 </script>
 </body>
 </html>
