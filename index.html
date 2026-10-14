@@ -301,14 +301,27 @@ const semAcento = t => String(t==null?'':t).normalize('NFD').replace(/[\u0300-\u
 const esc = t => String(t==null?'':t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 /* ===================== DATAS ===================== */
+/* Ordem das datas em texto: 'dm' (dia/mês, padrão BR) ou 'md' (mês/dia, padrão americano,
+   comum em exportações do Forms/Power Automate). Detectada automaticamente ao carregar a base. */
+let ORDEM_DATA = 'dm';
+function detectarOrdem(valores){
+  let dm=0, md=0;
+  valores.forEach(v=>{ if(v instanceof Date) return;
+    const m = String(v||'').trim().match(/^(\d{1,2})\/(\d{1,2})\/\d{2,4}/); if(!m) return;
+    if(+m[1]>12) dm++; if(+m[2]>12) md++; });
+  ORDEM_DATA = md>dm ? 'md' : 'dm';
+  return {dm, md};
+}
 function paraData(txt){
   if(txt instanceof Date && !isNaN(txt)) return txt;
   const s = String(txt||'').trim();
   if(!s) return null;
-  /* Padrão brasileiro: dia/mês/ano, com ano de 2 ou 4 dígitos (ex.: 1/10/26 14:54 = 1º de outubro). */
-  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})(?!\d)(?:[ ,T]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  /* dia/mês/ano (ou mês/dia, se a base vier no padrão americano), ano com 2 ou 4 dígitos, hora com AM/PM opcional */
+  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})(?!\d)(?:[ ,T]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?)?/);
+  if(m && m[7]){ let h=+m[4]%12; if(/pm/i.test(m[7])) h+=12; m[4]=String(h); }
   if(m){
-    const ano = m[3].length===2 ? 2000 + +m[3] : +m[3], mes = +m[2], dia = +m[1];
+    const ano = m[3].length===2 ? 2000 + +m[3] : +m[3];
+    const dia = ORDEM_DATA==='md' ? +m[2] : +m[1], mes = ORDEM_DATA==='md' ? +m[1] : +m[2];
     if(mes<1 || mes>12 || dia<1 || dia>31) return null;
     return new Date(ano, mes-1, dia, +(m[4]||0), +(m[5]||0), +(m[6]||0));
   }
@@ -407,13 +420,17 @@ function lerCSV(texto){
   });
 }
 function aplicarBase(brutos, nomeArquivo){
-  const registros = preparar(brutos.map(mapearLinha));
+  const mapeados = brutos.map(mapearLinha);
+  const ord = detectarOrdem(mapeados.map(r=>r.d));
+  const registros = preparar(mapeados);
+  const semData = registros.filter(r=>!r.dt).length;
+  console.log('Datas:', ORDEM_DATA==='md'?'mês/dia (americano)':'dia/mês (brasileiro)', ord, 'sem data:', semData);
   if(!registros.length) throw new Error('Nenhum registro válido encontrado. Confira se as colunas do arquivo seguem o padrão da base.');
   BASE = registros;
   $('nomeFonte').textContent = nomeArquivo;
   $('dataCarga').textContent = ' · carregada em ' + new Date().toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'});
   iniciarFiltros();
-  mostrarAviso('ok', 'Base atualizada com sucesso: ' + num(registros.length) + ' registros carregados de "' + nomeArquivo + '".');
+  mostrarAviso(semData?'erro':'ok', 'Base atualizada: ' + num(registros.length) + ' registros de "' + nomeArquivo + '" · datas lidas como ' + (ORDEM_DATA==='md'?'MÊS/DIA (padrão americano)':'DIA/MÊS') + (semData ? ' · ATENÇÃO: '+num(semData)+' registro(s) sem data válida' : ''));
 }
 function mostrarAviso(tipo, texto){
   const el = $('aviso');
@@ -991,7 +1008,7 @@ window.addEventListener('error', e=>{ mostrarAviso('erro','Erro no dashboard: '+
    Só quem tem a senha vê os botões de carregar e publicar. */
 const API_KEY = '$2a$10$KNdROZHfjqd6AoL4WBeAN.daX384YekFBY7Af7iXNeRF3UBeOvkcC';
 const SENHA_ADMIN = '5s2026';
-let BIN_ID = '6ace828eac6210605a2ec354';   // preenchido depois da primeira publicação
+let BIN_ID = '';   // preenchido depois da primeira publicação
 if(!BIN_ID) BIN_ID = localStorage.getItem('faltas_bin') || '';
 let adminOn = false;
 
@@ -1046,7 +1063,7 @@ async function carregarOnline(){
     if(!r.ok) throw new Error('HTTP '+r.status);
     const p = (await r.json()).record;
     const linhas = JSON.parse(await descomprimir(p.z));
-    BASE = preparar(linhas.map(l=>({d:l[0],op:l[1],c:l[2],q:l[3],t:l[4],l:l[5],o:l[6],s:l[7]})));
+    ORDEM_DATA='dm'; BASE = preparar(linhas.map(l=>({d:l[0],op:l[1],c:l[2],q:l[3],t:l[4],l:l[5],o:l[6],s:l[7]})));
     $('nomeFonte').textContent = p.nome || 'base online';
     marcarOnline(p);
     iniciarFiltros();
